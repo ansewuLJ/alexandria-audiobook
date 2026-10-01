@@ -230,7 +230,7 @@ def split_into_chunks(text, max_size=3000):
 
     return chunks
 
-def process_chunk(client, model_name, chunk, chunk_num, total_chunks, previous_entries=None, max_retries=2, system_prompt=None, user_prompt_template=None, max_tokens=4096, temperature=0.6, top_p=0.8, top_k=0, min_p=0, presence_penalty=0.0, banned_tokens=None):
+def process_chunk(client, model_name, chunk, chunk_num, total_chunks, previous_entries=None, max_retries=2, system_prompt=None, user_prompt_template=None, max_tokens=4096, temperature=0.6, top_p=0.8, top_k=0, min_p=0, presence_penalty=0.0, banned_tokens=None, enable_thinking=False):
     """Process a text chunk and return JSON script entries"""
     # Use provided prompts or fall back to defaults
     sys_prompt = system_prompt or DEFAULT_SYSTEM_PROMPT
@@ -277,6 +277,7 @@ def process_chunk(client, model_name, chunk, chunk_num, total_chunks, previous_e
                 max_tokens=max_tokens,
                 extra_body={
                     k: v for k, v in {
+                        "chat_template_kwargs": {"enable_thinking": bool(enable_thinking)},
                         "top_k": top_k if top_k else None,
                         "min_p": min_p if min_p else None,
                         "banned_tokens": banned_tokens if banned_tokens else None,
@@ -418,7 +419,9 @@ def main():
         return
 
     # Load LLM config
-    config_path = os.path.join(os.path.dirname(__file__), "config.json")
+    config_path = os.environ.get("ALEXANDRIA_CONFIG_PATH") or os.path.join(
+        os.path.dirname(__file__), "config.json"
+    )
     config = {}
     if os.path.exists(config_path):
         try:
@@ -449,10 +452,12 @@ def main():
     min_p = generation_config.get("min_p", 0)
     presence_penalty = generation_config.get("presence_penalty", 0.0)
     banned_tokens = generation_config.get("banned_tokens", [])
+    enable_thinking = bool(generation_config.get("enable_thinking", False))
 
     print(f"Connecting to: {base_url}")
     print(f"Using model: {model_name}")
     print(f"Chunk size: {chunk_size} chars, Max tokens: {max_tokens}")
+    print(f"Thinking mode: {'enabled' if enable_thinking else 'disabled'}")
     if banned_tokens:
         print(f"Banned tokens: {banned_tokens}")
 
@@ -484,7 +489,8 @@ def main():
             top_k=top_k,
             min_p=min_p,
             presence_penalty=presence_penalty,
-            banned_tokens=banned_tokens
+            banned_tokens=banned_tokens,
+            enable_thinking=enable_thinking
         )
         all_entries.extend(entries)
         print(f"  Got {len(entries)} entries")

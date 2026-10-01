@@ -3,6 +3,12 @@ services:
     build: .
     ports:
       - "4200:4200"
+    # 把宿主机写进 /etc/hosts，不经过 DNS。
+    # Linux 上的 Docker 不会自动添加 host.docker.internal，走 DNS 会被 Mihomo 的
+    # fake-ip 劫持成 198.18.x.x，导致容器连不上宿主机服务。host-gateway 是 Docker
+    # 内置关键字，动态解析为当前网桥网关，切换 Wi-Fi 后依然有效。
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       # Store WebUI settings on a mounted volume so they survive container restarts
       - ALEXANDRIA_CONFIG_PATH=/alexandria/config/config.json

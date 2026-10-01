@@ -8,7 +8,7 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTa
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Optional, Dict
 import re
 import time
@@ -197,9 +197,17 @@ class LLMConfig(BaseModel):
     api_key: str
     model_name: str
 
+class VLLMOmniConfig(BaseModel):
+    base_url: str = "http://host.docker.internal:8000/v1"
+    api_key: str = ""
+    model: str = ""
+    model_type: str = "design"
+    concurrency: int = Field(default=16, ge=1, le=32)
+
 class TTSConfig(BaseModel):
-    mode: str = "local"  # "local" or "external"
+    mode: str = "local"  # "local", "external", or "vllm_omni"
     url: str = "http://127.0.0.1:7860"  # external mode only
+    vllm_omni: VLLMOmniConfig = Field(default_factory=VLLMOmniConfig)
     device: str = "auto"  # local mode: "auto", "cuda:0", "cpu", etc.
     language: str = "English"  # TTS language
     parallel_workers: int = 2  # concurrent TTS workers
@@ -1155,7 +1163,6 @@ async def generate_batch_endpoint(request: BatchGenerateRequest, background_task
 
     indices = request.indices
     total = len(indices)
-
     def progress_callback(completed, failed, total):
         """Update logs with progress."""
         process_state["audio"]["logs"].append(
@@ -1195,12 +1202,30 @@ async def generate_batch_endpoint(request: BatchGenerateRequest, background_task
     background_tasks.add_task(task)
     return {"status": "started", "workers": workers, "total_chunks": total}
 
+@app.get("/api/tts/vllm-omni/status")
+async def vllm_omni_status():
+    engine = project_manager.get_engine()
+    if engine is None or engine.mode != "vllm_omni":
+        return {"connected": False, "model_ready": False,
+                "detail": "Select vLLM-Omni mode and save the configuration first"}
+    try:
+        return engine._vllm_omni.status()
+    except Exception as exc:
+        return {"connected": False, "model_ready": False, "detail": str(exc)}
+
 @app.post("/api/generate_batch_fast")
 async def generate_batch_fast_endpoint(request: BatchGenerateRequest, background_tasks: BackgroundTasks):
     """Generate multiple chunks using batch TTS API with single seed. Faster but less flexible.
     Requires custom Qwen3-TTS with /generate_batch endpoint."""
     if process_state["audio"]["running"]:
         raise HTTPException(status_code=400, detail="Audio generation already running")
+
+    if os.path.exists(CONFIG_PATH):
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            if json.load(f).get("tts", {}).get("mode") == "vllm_omni":
+                status = await vllm_omni_status()
+                if not status["model_ready"]:
+                    raise HTTPException(status_code=409, detail=status["detail"])
 
     # Load batch_seed and batch_size from config
     batch_seed = -1
@@ -1221,6 +1246,11 @@ async def generate_batch_fast_endpoint(request: BatchGenerateRequest, background
 
     indices = request.indices
     total = len(indices)
+    if os.path.exists(CONFIG_PATH):
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            if json.load(f).get("tts", {}).get("mode") == "vllm_omni":
+                # vLLM-Omni sends individual speech requests; keep one outer group.
+                batch_size = total
 
     def progress_callback(completed, failed, total):
         process_state["audio"]["logs"].append(

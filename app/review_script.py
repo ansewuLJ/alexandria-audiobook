@@ -77,7 +77,8 @@ def review_batch(client, model_name, batch_entries, batch_num, total_batches,
                  previous_tail=None, source_context=None, max_retries=2,
                  system_prompt=None, user_prompt_template=None,
                  max_tokens=8000, temperature=0.4, top_p=0.8, top_k=20,
-                 min_p=0, presence_penalty=0.0, banned_tokens=None):
+                 min_p=0, presence_penalty=0.0, banned_tokens=None,
+                 enable_thinking=False):
     """Send a batch of script entries through the LLM for review and correction."""
     sys_prompt = system_prompt or REVIEW_SYSTEM_PROMPT
     usr_template = user_prompt_template or REVIEW_USER_PROMPT
@@ -113,6 +114,7 @@ def review_batch(client, model_name, batch_entries, batch_num, total_batches,
                 max_tokens=max_tokens,
                 extra_body={
                     k: v for k, v in {
+                        "chat_template_kwargs": {"enable_thinking": bool(enable_thinking)},
                         "top_k": top_k,
                         "min_p": min_p,
                         "banned_tokens": banned_tokens if banned_tokens else None,
@@ -276,7 +278,9 @@ def main():
             print(f"Warning: Source file not found: {args.source}")
 
     # Load config
-    config_path = os.path.join(os.path.dirname(__file__), "config.json")
+    config_path = os.environ.get("ALEXANDRIA_CONFIG_PATH") or os.path.join(
+        os.path.dirname(__file__), "config.json"
+    )
     config = {}
     if os.path.exists(config_path):
         try:
@@ -306,10 +310,12 @@ def main():
     min_p = generation_config.get("min_p", 0)
     presence_penalty = generation_config.get("presence_penalty", 0.0)
     banned_tokens = generation_config.get("banned_tokens", [])
+    enable_thinking = bool(generation_config.get("enable_thinking", False))
 
     print(f"Connecting to: {base_url}")
     print(f"Using model: {model_name}")
     print(f"Batch size: {batch_size} entries, Max tokens: {max_tokens}")
+    print(f"Thinking mode: {'enabled' if enable_thinking else 'disabled'}")
     if banned_tokens:
         print(f"Banned tokens: {banned_tokens}")
 
@@ -363,7 +369,8 @@ def main():
                 top_k=top_k,
                 min_p=min_p,
                 presence_penalty=presence_penalty,
-                banned_tokens=banned_tokens
+                banned_tokens=banned_tokens,
+                enable_thinking=enable_thinking
             )
 
             if corrected is None:
@@ -435,7 +442,8 @@ def main():
                 top_k=top_k,
                 min_p=min_p,
                 presence_penalty=presence_penalty,
-                banned_tokens=banned_tokens
+                banned_tokens=banned_tokens,
+                enable_thinking=enable_thinking
             )
 
             if corrected is None:
